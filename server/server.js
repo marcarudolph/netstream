@@ -166,7 +166,7 @@ function initChannelInfosForAllDevices(continueWith) {
 function initServer() {
 
     app.get("/streams/:channelName", function(request, response) {
-        var channelName = request.params.channelName.replace('_', ' ');
+        var channelName = request.params.channelName.replace(/_/g, ' ');
         tuneChannel(channelName, function (result) {
             if (result.success) {
 
