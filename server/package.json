@@ -1,0 +1,10 @@
+{
+    "name":"netstream-tuner",
+    "description":"netream tuner service",
+    "version":"0.0.1",
+    "private":true,
+    "dependencies":{
+        "request": "*",
+        "express": "3.x"
+    }
+}

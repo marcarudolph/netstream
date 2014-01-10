@@ -1,10 +1,16 @@
-var http = require('http');
-var url = require('url');
+var express = require('express'),
+    url = require('url'),
+    request = require('request'),
+    app = express();
 
 var devices = [
 //{ host: 'netstream01.insolo.local', port: 80, channels: {} },
 { host: 'netstream02.insolo.local', port: 80, channels: {} }
 ];
+devices.map(function(d) {
+    d.baseUrl = 'http://' + d.host + ":" + d.port;
+    d.controlUrl = d.baseUrl + "/control";
+});
 
 var tuners = [
 { device: devices[0], index: 1 },
@@ -14,30 +20,18 @@ var tuners = [
 ];
 
 function getChannelInfos(device, continueWith) {
-    var requestData = { method: "Toma.GetFavourites", id: 0 };
-    var requestBody = JSON.stringify(requestData);
+    var requestData = { method: "Toma.GetFavourites", id: 0 },
+        requestOptions = {
+            url: device.controlUrl,
+            method: "POST",
+            body:  JSON.stringify(requestData)
+        };
 
-    var client = http.createClient(device.port, device.host);
-
-    var req = client.request('POST', '/control', { 'Content-Length': requestBody.length });
-
-    req.on('response', function (res) {
-        res.setEncoding('utf8');
-
-        var body = '';
-        res.on('data', function (chunk) {
-            body += chunk;
-        });
-
-        res.on('end', function (chunk) {
-            var responseData = JSON.parse(body);
-            var channels = responseData.Favourites[0].FavouriteItems;
-            continueWith({ device: device, channels: channels });
-        });
-
+    request(requestOptions, function (error, response, body) {
+        var responseData = JSON.parse(body),
+            channels = responseData.Favourites[0].FavouriteItems;
+        continueWith({ device: device, channels: channels });
     });
-
-    req.end(requestBody);
 }
 
 function storeChannelInfos(deviceChannels) {
@@ -61,34 +55,23 @@ function getTunerInfos(continueWith) {
     for (var idx = 0; idx < tuners.length; idx++) {
 
         function requestTuner(idx) {
-            var tuner = tuners[idx];
+            var tuner = tuners[idx],
+                requestData = {
+                    "method": "Toma.GetTunerInformation",
+                    "id": 0, "params": { "TunerIndex": tuner.index }
+                },
+                requestOptions = {
+                    url: tuner.device.controlUrl,
+                    method: "POST",
+                    body:  JSON.stringify(requestData)
+                };
 
             console.log('requestTuner: ' + tuner.device.host + '/' + tuner.index);
 
-            var requestData =
-            {
-                "method": "Toma.GetTunerInformation",
-                "id": 0, "params": { "TunerIndex": tuner.index }
-            };
-            var requestBody = JSON.stringify(requestData);
-
-            var client = http.createClient(tuner.device.port, tuner.device.host);
-
-            var req = client.request('POST', '/control', { 'Content-Length': requestBody.length });
-
-            req.on('response', function (res) {
-                res.setEncoding('utf8');
+            request(requestOptions, function (error, response, body) {
                 console.log('got requestTuner response: ' + tuner.device.host + '/' + tuner.index);
-
-                var body = '';
-                res.on('data', function (chunk) {
-                    body += chunk;
-                });
-
-                res.on('end', function (chunk) {
-                    var responseData = JSON.parse(body);
-                    var tunerInfo =
-                    {
+                var responseData = JSON.parse(body),
+                    tunerInfo = {
                         tuner: tuner,
                         isInUse: responseData.TunerStatus.ActiveStreams > 0,
                         channelName: responseData.ChannelName,
@@ -96,15 +79,11 @@ function getTunerInfos(continueWith) {
                         streamingPort: responseData.StreamingPort
                     };
 
-                    tunerInfos[idx] = tunerInfo;
+                tunerInfos[idx] = tunerInfo;
 
-                    if (--remainingInfoCount === 0)
-                        continueWith(tunerInfos);
-                });
-
+                if (--remainingInfoCount === 0)
+                    continueWith(tunerInfos);
             });
-
-            req.end(requestBody);
         }
         requestTuner(idx);
     }
@@ -114,18 +93,17 @@ function sendTuneRequest(device, tunerequestKey, continueWith) {
     console.log('sendTuneRequest: ' + tunerequestKey);
     var path = '/stream/tunerequest' + tunerequestKey;
 
-    var client = http.createClient(device.port, device.host);
+    var requestOptions = {
+                        url: device.baseUrl + path,
+                        method: "POST"
+                    };
 
-    var req = client.request('POST', path, { 'Content-Length': 0 });
-
-    req.on('response', function (res) {
-        var streamUri = res.headers['location'];
-        var uriInfos = url.parse(streamUri);
+    request(requestOptions, function (error, response, body) {
+        var streamUri = response.headers['location'],
+            uriInfos = url.parse(streamUri);
 
         continueWith({ streamingPort: uriInfos.port });
     });
-
-    req.end();
 }
 
 function tuneChannel(channelName, continueWith) {
@@ -186,48 +164,28 @@ function initChannelInfosForAllDevices(continueWith) {
 }
 
 function initServer() {
-    http.createServer(function (request, response) {
-        var parsedUrl = url.parse(request.url);
-        var streamPrefix = '/streams/';
 
-        if (parsedUrl.pathname.indexOf(streamPrefix) === 0) {
-            var uriEncodedChannelName = parsedUrl.pathname.replace(streamPrefix, '');
-            var channelName = decodeURIComponent(uriEncodedChannelName).replace(/\+/g, ' ');
+    app.get("/streams/:channelName", function(request, response) {
+        tuneChannel(channelName, function (result) {
+            if (result.success) {
 
-            tuneChannel(channelName, function (result) {
-                if (result.success) {
+                var streamUrl = 'http://' + result.host + ':' + result.streamingPort;
+                console.log('redirecting client to ' + streamUrl);
 
-                    var streamUrl = 'http://' + result.host + ':' + result.streamingPort;
-                    console.log('redirecting client to ' + streamUrl);
-
-                    response.writeHead(302, { 'location': streamUrl });
-                    response.end();
-                }
-                else {
-                    console.log('stream request failed with reason ' + result.reason);
-                    response.writeHead(404, { 'Content-Type': 'text/plain' });
-                    response.end('FAIL: ' + result.reason);
-                }
-            });
-        }
-        else {
-            response.writeHead(404);
-            response.end();
-        }
-
-    }).listen(8080);
+                response.writeHead(302, { 'location': streamUrl });
+                response.end();
+            }
+            else {
+                console.log('stream request failed with reason ' + result.reason);
+                response.writeHead(404, { 'Content-Type': 'text/plain' });
+                response.end('FAIL: ' + result.reason);
+            }
+        });
+    });
+    app.listen(8080);
 }
 
 
 initChannelInfosForAllDevices(function () {
-
     initServer();
-    //    tuneChannel('arte HD', function (result) {
-    //        if (result.success) {
-    //            console.log('http://' + result.host + ':' + result.streamingPort);
-    //        }
-    //        else {
-    //            console.log('FAIL: ' + result.reason);
-    //        }
-    //    });
 });
