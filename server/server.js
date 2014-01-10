@@ -165,8 +165,9 @@ function initChannelInfosForAllDevices(continueWith) {
 
 function initServer() {
 
-    app.get("/streams/:channelName", function(request, response) {        
-        tuneChannel(request.params.channelName, function (result) {
+    app.get("/streams/:channelName", function(request, response) {
+        var channelName = request.params.channelName.replace('_', ' ');
+        tuneChannel(channelName, function (result) {
             if (result.success) {
 
                 var streamUrl = 'http://' + result.host + ':' + result.streamingPort;
