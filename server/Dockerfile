@@ -1,6 +1,11 @@
-FROM danscan/node
+FROM google/nodejs
 MAINTAINER marcarudolph
-CMD node /server/server.js
-EXPOSE 8080
+
+ADD package.json /server/
+WORKDIR /server
+RUN npm install
+
 ADD ./ /server/
-RUN cd /server ; npm install
+
+EXPOSE 8080
+CMD ["node", "server.js"]
